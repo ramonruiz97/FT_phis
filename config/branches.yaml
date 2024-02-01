@@ -1,0 +1,110 @@
+common: &common
+    'time': 'B_LOKI_DTF_CTAU/{C_LIGHT}'
+    'sigmat': 'B_LOKI_DTF_CTAUERR/{C_LIGHT}'
+    'hlt1b': 'hlt1b'
+    'B_PT': 'B_PT'
+    'B_ETA': 'B_ETA'
+    'nPVs': 'nPVs'
+    'nTracks': 'nTracks'
+   
+tagging: &tagging
+    'B_OSCharm_TAGDEC': 'B_OSCharm_TAGDEC'
+    'B_OSCharm_TAGETA': 'B_OSCharm_TAGETA'
+    # 'B_OSElectron_TAGDEC': 'B_OSElectron_TAGDEC'
+    # 'B_OSElectron_TAGETA': 'B_OSElectron_TAGETA'
+    'B_OSElectronLatest_TAGDEC': 'B_OSElectronLatest_TAGDEC'
+    'B_OSElectronLatest_TAGETA': 'B_OSElectronLatest_TAGETA'
+    # 'B_OSKaon_TAGDEC': 'B_OSKaon_TAGDEC'
+    # 'B_OSKaon_TAGETA': 'B_OSKaon_TAGETA'
+    'B_OSKaonLatest_TAGDEC': 'B_OSKaonLatest_TAGDEC'
+    'B_OSKaonLatest_TAGETA': 'B_OSKaonLatest_TAGETA'
+    # 'B_OSMuon_TAGDEC': 'B_OSMuon_TAGDEC'
+    # 'B_OSMuon_TAGETA': 'B_OSMuon_TAGETA'
+    'B_OSMuonLatest_TAGDEC': 'B_OSMuonLatest_TAGDEC'
+    'B_OSMuonLatest_TAGETA': 'B_OSMuonLatest_TAGETA'
+    'B_OSVtxCh_TAGDEC': 'B_OSVtxCh_TAGDEC'
+    'B_OSVtxCh_TAGETA': 'B_OSVtxCh_TAGETA'
+    'B_SSKaon_TAGDEC': 'B_SSKaon_TAGDEC'
+    'B_SSKaon_TAGETA': 'B_SSKaon_TAGETA'
+    'B_SSKaonLatest_TAGDEC': 'B_SSKaonLatest_TAGDEC'
+    'B_SSKaonLatest_TAGETA': 'B_SSKaonLatest_TAGETA'
+    'B_IFT_InclusiveTagger_TAGDEC': 'B_IFT_InclusiveTagger_TAGDEC'
+    'B_IFT_InclusiveTagger_TAGETA': 'B_IFT_InclusiveTagger_TAGETA'
+    'B_ID': 'B_ID'
+    
+Bs2JpsiPhi: &Bs2JpsiPhi
+    <<: *common
+    <<: *tagging
+    "sigBsSW" : "sigBsSW"
+    "B_ConstJpsi_M_1": "B_ConstJpsi_M_1"
+
+MC_Bs2JpsiPhi: &MC_Bs2JpsiPhi
+    <<: *Bs2JpsiPhi
+    'B_BKGCAT': 'B_BKGCAT'
+    'B_ID_GenLvl': 'B_TRUEID'
+
+MC_Bs2JpsiPhi_dG0: &MC_Bs2JpsiPhi_dG0
+    <<: *MC_Bs2JpsiPhi
+
+Bu2JpsiKplus: &Bu2JpsiKplus
+    <<: *common
+    <<: *tagging
+    "sigBuSW" : "sigBuSW"
+    'sigBuOSMuonLatestSW' : 'sigBuOSMuonLatestSW'
+    'sigBuOSKaonLatestSW': 'sigBuOSKaonLatestSW'
+    'sigBuOSElectronLatestSW': 'sigBuOSElectronLatestSW'
+    'sigBuOSCharmSW': 'sigBuOSCharmSW' 
+    'sigBuOSVtxChSW': 'sigBuOSVtxChSW'
+    'OSCombination_TAGDEC': 'OSCombination_TAGDEC'
+    'OSCombination_TAGETA': 'OSCombination_TAGETA'
+    'sigBuOSCombinationSW': 'sigBuOSCombinationSW'
+    "B_ConstJpsi_M_1": "B_ConstJpsi_M_1"
+
+MC_Bu2JpsiKplus:
+    <<: *Bu2JpsiKplus
+    'B_BKGCAT': 'B_BKGCAT'
+    # 'B_TRUEID': 'B_TRUEID'
+    'B_ID_GenLvl': 'B_ID_GenLvl'
+
+Bs2DsPi: &Bs2DsPi
+    <<: *tagging
+    "sigBsSW" : "sigBsSW"
+    'B_MM': 'B_MM'
+    'time': 'B_LOKI_DTF_CTAU/{C_LIGHT}'
+    'B_IPCHI2_OWNPV' : 'B_IPCHI2_OWNPV'
+    'sigmat': 'B_LOKI_DTF_CTAUERR/{C_LIGHT}'
+    'B_P': 'B_P'
+    'B_PT': 'B_PT'
+    'BETA' : 'BETA'
+    'nTracks': 'nTracks'
+    'nLong': 'nLongTracks'
+    'nPVs': 'nPVs'
+    "B_PVFitDs_M_1" : "B_PVFitDs_M_1" 
+
+MC_Bs2DsPi:
+    <<: *tagging
+    'B_MM': 'B_MM'
+    'time': 'B_LOKI_DTF_CTAU/{C_LIGHT}'
+    'B_IPCHI2_OWNPV' : 'B_IPCHI2_OWNPV'
+    'sigmat': 'B_LOKI_DTF_CTAUERR/{C_LIGHT}'
+    'B_P': 'B_P'
+    'B_PT': 'B_PT'
+    'BETA' : 'BETA'
+    'nTracks': 'nTracks'
+    'nLong': 'nLongTracks'
+    'nPVs': 'nPVs'
+    "B_PVFitDs_M_1" : "B_PVFitDs_M_1" 
+    'B_TRUETAU': 'B_TRUETAU'
+    'B_BKGCAT': 'B_BKGCAT'
+    'B_TRUEID': 'B_TRUEID'
+
+Bs2DsPi_Prompt: &Bs2DsPi_Prompt
+    # <<: *tagging
+    'sig_sw': 'sig_sw'
+    'time': 'B_LOKI_DTF_CTAU/{C_LIGHT}'
+    'sigmat': 'B_LOKI_DTF_CTAUERR/{C_LIGHT}'
+    'runNumber': 'runNumber'
+    'eventNumber': 'eventNumber'
+    'B_PT': 'B_PT'
+    'nLong': 'nLongTracks'
+    'B_IPCHI2_OWNPV' : 'B_IPCHI2_OWNPV'

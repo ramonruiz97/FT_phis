@@ -1,0 +1,369 @@
+__author__ = ["Ramón Ángel Ruiz Fernández"]
+__email__ = ["rruizfer@cern.ch"]
+
+# OS Calibration Tagging
+# {{{
+rule OS_calibration:
+  wildcard_constraints:
+      mode = "(MC_)?(Bu2JpsiKplus|Bs2DsPi)",
+      version = "v(0|1|4)r(\d)(p\d)?",
+      tagger = "(OSKaonLatest|OSMuonLatest|OSElectronLatest|OSCharm|OSVtxCh)",
+      massmodel = "(crystalball|ipatia)"
+
+  input:
+     #TODO: Change the tuple -> if not u need to run all epm -> 
+     #This is now on this way to check
+     # root = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged_OS.root",
+     root = "tuples/{mode}/{year}/{version}_{massmodel}_sweighted.root",
+  output:
+    params = "output/params/{tagger}/{mode}/{year}/{version}_{massmodel}.json",
+    plots = directory("output/figures/{tagger}/{mode}/{year}/{version}_{massmodel}")
+  log:
+    "output/log/{tagger}/{mode}/{year}/{version}_{massmodel}.log"
+  run:
+    shell(f"""(time\
+        python scripts/os_calibration.py\
+            --data {input.root}\
+            --weight sigBu{wildcards.tagger}SW\
+            --tagger {wildcards.tagger}\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --model linear\
+            --output-json {output.params}\
+            --output-plots {output.plots}\
+            ) &> {log}""") 
+
+rule OS_Combination:
+  wildcard_constraints:
+      mode = "(MC_)?(Bu2JpsiKplus|Bs2DsPi)",
+      version = "v(0|1|4)r(\d)(p\d)?",
+      massmodel = "(crystalball|ipatia)"
+  input:
+     root = "tuples/{mode}/{year}/{version}_{massmodel}_sweighted.root",
+     calib = [
+              "output/params/OSKaonLatest/{mode}/{year}/{version}_{massmodel}.json",
+              "output/params/OSMuonLatest/{mode}/{year}/{version}_{massmodel}.json",
+              "output/params/OSElectronLatest/{mode}/{year}/{version}_{massmodel}.json",
+              "output/params/OSCharm/{mode}/{year}/{version}_{massmodel}.json",
+              "output/params/OSVtxCh/{mode}/{year}/{version}_{massmodel}.json"
+             ]
+  output:
+    root = "tuples/{mode}/{year}/{version}_{massmodel}_combined.root",
+  log:
+    "output/log/{mode}/{year}/{mode}_{year}_{version}_{massmodel}_combined.log",
+  run:
+    shell(f"""(time\
+        python scripts/combination.py\
+            --data {input.root}\
+            --tagger OSCombination\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --calibrations {",".join(input.calib)}\
+            --model linear\
+            --output-sample {output.root}\
+            ) &> {log}""") 
+
+#Maybe these rules should be in selection folder
+rule mass_prefit_Combination:
+  wildcard_constraints:
+      mode = "(MC_)?Bu2JpsiKplus",
+      version = "v(0|1|4)r(\d)(p\d)?",
+      massmodel = "(crystalball|ipatia)",
+      trigger = "(biased|unbiased)"
+  input:
+    root = "tuples/{mode}/{year}/{version}_{massmodel}_combined.root",
+  output:
+    params = 'output/params/mass_prefit_combination/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}.json',
+    plots = directory('output/figures/mass_prefit_combination/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}/')
+  log:
+    'output/log/mass_prefit_combination/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --output-params {output.params} \
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --mode {wildcards.mode} \
+    --tagger OSCombination\
+    --trigger {wildcards.trigger} \
+    ) &> {log}""")
+
+rule mass_fit_Combination_data:
+  """
+     Fit for Bu sw8
+  """
+  threads: 2
+  resources:
+    mem_mb=6000
+  wildcard_constraints:
+    mode = 'Bu2JpsiKplus',
+    version = "v(0|1|4)r(\d)(p\d)?",
+    massmodel = "(crystalball|ipatia)",
+    trigger = "(biased|unbiased)"
+  input:
+    root = "tuples/{mode}/{year}/{version}_{massmodel}_combined.root",
+    params = 'output/params/mass_prefit_combination/{year}/MC_{mode}/{version}_{massmodel}_OSCombination_{trigger}.json',
+  output:
+    params = 'output/params/mass_fit/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}.json',
+    sweights = temp("tuples/{mode}/{year}/{version}_{massmodel}_OSCombination_{trigger}.npy"),
+    plots = directory('output/figures/mass_fit/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}/')
+  log:
+    'output/log/mass_fit_bu_rd/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --input-params {input.params} \
+    --output-params {output.params} \
+    --sweights {output.sweights}\
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --tagger OSCombination \
+    --trigger {wildcards.trigger} \
+    --mode {wildcards.mode} \
+    ) &> {log}""")
+
+
+rule mass_fit_Combination_mc:
+  """
+     Fit for Bu sw8
+  """
+  threads: 2
+  resources:
+    mem_mb=6000
+  wildcard_constraints:
+    mode = 'MC_Bu2JpsiKplus',
+    version = "v(0|1|4)r(\d)(p\d)?",
+    massmodel = "(crystalball|ipatia)",
+    trigger = "(biased|unbiased)"
+  input:
+    root = "tuples/{mode}/{year}/{version}_{massmodel}_combined.root",
+    params = 'output/params/mass_prefit_combination/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}.json',
+  output:
+    params = 'output/params/mass_fit/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}.json',
+    sweights = temp("tuples/{mode}/{year}/{version}_{massmodel}_OSCombination_{trigger}.npy"),
+    plots = directory('output/figures/mass_fit/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}/')
+  log:
+    'output/log/mass_fit_bu_rd/{year}/{mode}/{version}_{massmodel}_OSCombination_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --input-params {input.params} \
+    --output-params {output.params} \
+    --sweights {output.sweights}\
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --tagger OSCombination \
+    --trigger {wildcards.trigger} \
+    --mode {wildcards.mode} \
+    ) &> {log}""")
+
+rule Merge_sweights_Combination:
+  """
+  This rule takes a list of .npy and merge them in one single tuple
+  """
+  threads: 2
+  resources:
+      mem_mb=6000
+  wildcard_constraints:
+      mode = '(MC_)?Bu2JpsiKplus',
+      version = "v(0|1|4)r(\d)(p\d)?",
+      massmodel = "(ipatia|crystalball)"
+  input:
+      root = "tuples/{mode}/{year}/{version}_{massmodel}_combined.root",
+      npy = lambda wcs: expand(
+                "tuples/{mode}/{year}/{version}_{massmodel}_OSCombination_{trigger}.npy",
+                version=wcs.version,
+                mode= wcs.mode,
+                year = wcs.year,
+                massmodel = wcs.massmodel,
+                trigger = ["biased", "unbiased"],
+            ),
+  output:
+      root = "tuples/{mode}/{year}/{version}_{massmodel}_combined_sweighted.root",
+  log:
+      "output/log/merge_sweights/{mode}/{year}/{mode}_{year}_{version}_{massmodel}_combined_sweighted.log",
+  run:
+      shell(f"""(time\
+    python scripts/sweights_add.py \
+    --input-sample {input.root} \
+    --output-sample {output.root} \
+    --mode {wildcards.mode} \
+    --version {wildcards.version} \
+    --weights {",".join(input.npy)}\
+    ) &> {log}""")
+
+
+rule OS_Combination_calibration:
+  wildcard_constraints:
+      mode = "(MC_)?(Bu2JpsiKplus|Bs2DsPi)",
+      version = "v(0|1|4)r(\d)(p\d)?",
+      massmodel = "(crystalball|ipatia)"
+  input:
+    # root = "tuples/{mode}/{year}/{version}_{massmodel}_combined_sweighted.root",
+    root = "tuples/{mode}/{year}/{version}_gbweightedOS.root"
+     #TODO: Change the tuple -> if not u need to run all epm -> 
+     #This is now on this way to check
+     # root = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged_OS.root",
+     # calib = [
+     #          "output/params/OSKaonLatest/{mode}/{year}/{version}.json",
+     #          "output/params/OSMuonLatest/{mode}/{year}/{version}.json",
+     #          "output/params/OSElectronLatest/{mode}/{year}/{version}.json",
+     #          "output/params/OSCharm/{mode}/{year}/{version}.json",
+     #          "output/params/OSVtxCh/{mode}/{year}/{version}.json"
+     #         ]
+  output:
+    params = "output/params/OSCombination/{mode}/{year}/{version}_{massmodel}.json",
+    plots = directory("output/figures/OSCombination/{mode}/{year}/{version}_{massmodel}")
+  log:
+    "output/log/OSCombination/{mode}/{year}/{version}_{massmodel}.log"
+  run:
+    shell(f"""(time\
+        python scripts/os_calibration.py\
+            --data {input.root}\
+            --weight sigBuOSCombinationSW*gbw\
+            --tagger OSCombination\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --model linear\
+            --output-json {output.params}\
+            --output-plots {output.plots}\
+            ) &> {log}""") 
+
+# }}}
+
+def input_forMC_ift(wildcards):
+	if "Bs2JpsiPhi" in wildcards.mode:
+	  root = "tuples/{mode}/{year}/{version}.root"
+	elif "Bs2DsPi" in wildcards.mode:
+		root = "tuples/{mode}/{year}/{version}_gbweightedIFT.root"
+	return root
+
+rule MC_ift_calibration:
+  wildcard_constraints:
+    mode = "(MC_)(Bs2JpsiPhi|Bs2DsPi)",
+	  corr = "(cut|gbw|nocorr)",
+	  model = "(full|nodeltas)",
+  input:
+	  root = input_forMC_ift
+  output:
+    params = "output/params/MC_IFT/{mode}/{year}/{version}_{corr}_{model}.json",
+    plots = directory("output/figures/MC_IFT/{mode}/{year}/{version}_{corr}_{model}")
+  log:
+    "output/log/MC_IFT/{mode}/{year}/{version}_{corr}_{model}.log"
+  run:
+    shell(f"""(time
+        python scripts/ift_mc_calibration.py\
+            --data {input.root}\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --model {wildcards.model}\
+						--corr {wildcards.corr}\
+            --output-json {output.params}\
+            --output-plots {output.plots}\
+            ) #&> {log}""")
+
+def input_forMC_cal(wildcards):
+	if "Bs2DsPi" in wildcards.mode:
+		root = "tuples/{mode}/{year}/{version}_gbweightedSS.root"
+	elif "Bu2JpsiKplus" in wildcards.mode:
+		root = "tuples/{mode}/{year}/{version}_gbweightedOSCombination.root"
+	return root
+
+rule MC_calibration:
+  """
+  TODO: To be merged with previous rule, no reason for two rules here
+  """
+  wildcard_constraints:
+    mode = "(MC_)(Bu2JpsiKplus|Bs2DsPi)",
+    corr = "(cut|gbw|nocorr)",
+    model = "(full|nodeltas)",
+  input:
+    root = input_forMC_cal
+  output:
+    params = "output/params/MC_cal/{mode}/{year}/{version}_{corr}_{model}.json",
+    plots = directory("output/figures/MC_cal/{mode}/{year}/{version}_{corr}_{model}")
+  log:
+    "output/log/MC_cal/{mode}/{year}/{version}_{corr}_{model}.log"
+  run:
+    shell(f"""(time
+        python scripts/mc_calibration.py\
+            --data {input.root}\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --model {wildcards.model}\
+						--corr {wildcards.corr}\
+            --output-json {output.params}\
+            --output-plots {output.plots}\
+            ) &> {log}""")
+
+
+rule MC_ift_table:
+  wildcard_constraints:
+    model = "(full|nodeltas)",
+
+  input:
+    calibrations_201516 = ["output/params/MC_IFT/MC_Bs2JpsiPhi/201516/{version}_nocorr_{model}.json",
+		                       "output/params/MC_IFT/MC_Bs2JpsiPhi/201516/{version}_cut_{model}.json",
+		                       "output/params/MC_IFT/MC_Bs2DsPi/201516/{version}_gbw_{model}.json",
+		                      "output/params/MC_IFT/MC_Bs2DsPi/201516/{version}_nocorr_{model}.json"],
+
+    calibrations_2017 = ["output/params/MC_IFT/MC_Bs2JpsiPhi/2017/{version}_nocorr_{model}.json",
+		                       "output/params/MC_IFT/MC_Bs2JpsiPhi/2017/{version}_cut_{model}.json",
+		                       "output/params/MC_IFT/MC_Bs2DsPi/2017/{version}_gbw_{model}.json",
+		                      "output/params/MC_IFT/MC_Bs2DsPi/2017/{version}_nocorr_{model}.json"],
+
+    calibrations_2018 = ["output/params/MC_IFT/MC_Bs2JpsiPhi/2018/{version}_nocorr_{model}.json",
+		                       "output/params/MC_IFT/MC_Bs2JpsiPhi/2018/{version}_cut_{model}.json",
+		                       "output/params/MC_IFT/MC_Bs2DsPi/2018/{version}_gbw_{model}.json",
+		                      "output/params/MC_IFT/MC_Bs2DsPi/2018/{version}_nocorr_{model}.json"]
+  output:
+    table = "output/params/table/MC_Bs2JpsiPhi/run2/{version}_{model}.tex",
+  log:
+    "output/log/table/MC_Bs2JpsiPhi/run2/{version}_{model}.log"
+  run:
+    shell(f"""(time\
+        python scripts/tabular.py\
+				   --input-201516 {",".join(input.calibrations_201516)}\
+				   --input-2017 {",".join(input.calibrations_2017)}\
+				   --input-2018 {",".join(input.calibrations_2018)}\
+					 --output {output.table}\
+            ) &> {log}""")
+
+# }}}
+
+
+#SS/IFT Calibration Tagging 
+# {{{
+rule SS_scq_calibration:
+  wildcard_constraints:
+      mode = "(Bs2JpsiPhi|Bs2DsPi)",
+      version = "v(0|1|4)r(\d)(p\d)?",
+      tagger = "(SS|IFT)"
+  input:
+		  "tuples/{mode}/{year}/{version}_gbweighted{tagger}.root"
+  params:
+	    "config/SS_cal_{year}.json"
+  output:
+      json = "output/params/{tagger}/{mode}/{year}/{version}.json",
+      plots = directory("output/figures/{tagger}/{mode}/{year}/{version}")
+  log:
+      "output/log/{tagger}/{mode}/{year}/{version}.log"
+  run:
+      shell(f"""(time\
+        python scripts/ss_calibration.py\
+            --data {input}\
+            --weight sigBsSW*gbw\
+						--time-res {params}\
+            --tagger {wildcards.tagger}\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --model linear\
+            --output-json {output.json}\
+            --output-plots {output.plots}\
+            ) #&> {log}""")
+
+# }}}
+# vim: fdm=marker ts=2 sw=2 sts=2 sr noet

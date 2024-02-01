@@ -1,0 +1,559 @@
+__author__ = ["Ramón Ángel Ruiz Fernández"]
+__email__ = ["rruizfer@cern.ch"]
+
+
+def input_for_combination(wildcards):
+    if wildcards.mode=='Bs2JpsiPhi':
+        sample = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.root",
+    else:
+        sample = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbweighted.root",
+    return sample
+
+
+rule SSandOS_calibration_in_DsPi:
+  """
+  Step 1 Plan
+  Test-> Taking OS Calibration taggers and SS Calibration taggers from DsPi
+  as discussed with Quentin
+  """
+    wildcard_constraints:
+         mode = "Bs2DsPi",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+         sample = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbweighted.root"
+    output:
+         sandbox = directory("Calibration/SSandOS_calibration/{year}/{mode}/{version}"),
+         calibration = "output/params/SSandOS_Calibration/{year}/{mode}/{version}.py",
+    log:
+        log = "output/log/SSandOS_calibration/{year}/{mode}/{version}.log",
+        job = "output/SSandOS_calibration/{year}/{mode}/{version}.sh",
+        option = "output/SSandOS_calibration/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/SSOS_calibration.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input}'),
+                     sweight=f"sigBsSW*gbw", #gbw 
+                     idvar=f"B_TRUEID" if 'MC' in f"{wildcards.mode}" else "B_ID",
+                     timevar="time",
+                     timeerrvar="sigmat",
+                     DeltaM=17.765,
+                     DeltaMerr=0.006,
+                     Lifetime=1.516,
+                     LifetimeErr=0.006,
+                     DeltaGamma=0.082,
+                     DeltaGammaErr=0.005,
+                     p0=SS_config[wildcards.year]['p0'],
+                     p1=SS_config[wildcards.year]['p1']
+                   )))
+    # second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+        shell(f"(time bash {log.job}) &> {log.log}")
+        # copy calibration to know output
+        shell(f"cp {output.sandbox}/EspressoCalibrations.py {output.calibration}")
+
+
+#Create branch Combination from calibration on Dspi it includes (SS+OS taggers) 
+#This rule works for Bs2JpsiPhi and BsDsPi
+rule OS_and_SS_combination:
+   """
+   Step 2: Plan
+   Combine OS + SS taggers in Bs2DsPi.
+   """
+    wildcard_constraints:
+         mode = "(Bs2DsPi|Bs2JpsiPhi)",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+        sample = input_for_combination,
+        calibration = "output/params/SSandOS_Calibration/{year}/Bs2DsPi/{version}.py",
+    output:
+        sandbox = directory("output/OS_and_SS_combination/{year}/{mode}/{version}"),
+        sample = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged.root",
+    log:
+        option = "output/SSandOS_combination/{year}/{mode}/{version}.py",
+        job = "output/SSandOS_combination/{year}/{mode}/{version}.sh",
+        log = "output/log/SSandOSOS_combination/{year}/{mode}/{version}.log"
+    run:
+      # first, create options file from template
+      t = Template(open('templates/OS_and_SS_combination.py').read())
+      with open(f"{log.option}", "w") as job:
+        job.write(open(f"{input.calibration}", 'r').read())
+        job.write(t.substitute(dict(
+            input_tuple=os.path.abspath(f'{input.sample}'),
+            output_tuple=os.path.abspath(f'{output.sample}'),
+        )))
+#     # second, write down a bash script to run the EPM
+      job_cmds = [
+        f"THE_PATH=`pwd`",
+        f"mkdir -p {output.sandbox}",
+        f"cd {output.sandbox}",
+        f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+        f"$THE_PATH/{log.option}",
+        f"cd $THE_PATH"
+        ]
+      with open(f"{log.job}", "w") as job:
+        job.write("\n".join(job_cmds))
+#     # run EPM -- takes 5 min or so
+      shell(f"(time bash {log.job}) &> {log.log}")
+#
+#     # this should be a script itself {{{
+      import uproot3 as uproot
+      import numpy as np
+      import pandas as pd
+      odf = uproot.open(f'{input.sample}')
+      odf = odf[list(odf.keys())[0]].pandas.df(flatten=None)
+      tdf = uproot.open(f'{output.sample}')
+      tdf = tdf[list(tdf.keys())[0]].pandas.df(flatten=None)
+      for i in tdf.keys():
+          if i in list(odf.keys()):
+            print(f'Dropping branch {i} from original df')
+            odf = odf.drop(columns=i)
+      result = pd.concat([odf, tdf], axis=1)
+      del odf
+      del tdf
+
+      with uproot.recreate(f"{output.sample}") as f:
+        _branches = {}
+        for k, v in result.items():
+            if 'int' in v.dtype.name:
+                _v = np.int32
+            elif 'bool' in v.dtype.name:
+                _v = np.int32
+            else:
+                _v = np.float64
+            _branches[k] = _v
+        mylist = list(dict.fromkeys(_branches.values()))
+        f['DecayTree'] = uproot.newtree(_branches)
+        f['DecayTree'].extend(result.to_dict(orient='list'))
+    # }}}
+
+
+#Take branch Combination (OS+SS) and Calibrate it on DsPi
+rule Combination_calibration_in_DsPi:
+  """
+  Step 3 Plan
+  Get Combination Calibration from Bs2DsPi
+  """
+    wildcard_constraints:
+         mode = "Bs2DsPi",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+        sample = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged.root",
+    output:
+         sandbox = directory("Calibration/Combination_calibration/{year}/{mode}/{version}"),
+         calibration = "output/params/Combination_Calibration/{year}/{mode}/{version}.py",
+    log:
+        log = "output/log/Combination_calibration/{year}/{mode}/{version}.log",
+        job = "output/Combination_calibration/{year}/{mode}/{version}.sh",
+        option = "output/Combination_calibration/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/Combination_Calibration.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input}'),
+                     sweight=f"sigBsSW*gbw", #gbw 
+                     idvar=f"B_TRUEID" if 'MC' in f"{wildcards.mode}" else "B_ID",
+                     timevar="time",
+                     timeerrvar="sigmat",
+                     DeltaM=17.765,
+                     DeltaMerr=0.006,
+                     Lifetime=1.516,
+                     LifetimeErr=0.006,
+                     DeltaGamma=0.082,
+                     DeltaGammaErr=0.005,
+                     p0=SS_config[wildcards.year]['p0'],
+                     p1=SS_config[wildcards.year]['p1']
+                   )))
+    # second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+        shell(f"(time bash {log.job}) &> {log.log}")
+        # copy calibration to know output
+        shell(f"cp {output.sandbox}/EspressoCalibrations.py {output.calibration}")
+
+
+#Take IFT Calibration on Bs2DsPi
+rule IFT_calibration:
+  """
+  Baseline for Bs2JpsiPhi -> take IFT calibration from Dspi
+  """
+    wildcard_constraints:
+         mode = "(MC_)?Bs2DsPi",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+         sample = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbweighted.root"
+    output:
+         sandbox = directory("Calibration/IFT_calibration/{year}/{mode}/{version}"),
+         calibration = "output/params/IFT_Calibration/{year}/{mode}/{version}.py",
+    log:
+        log = "output/log/IFT_calibration/{year}/{mode}/{version}.log",
+        job = "output/IFT_calibration/{year}/{mode}/{version}.sh",
+        option = "output/IFT_calibration/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/IFT_calibration.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input}'),
+                     sweight=f"sigBsSW*gbw", #gbw
+                     idvar=f"B_TRUEID" if 'MC' in f"{wildcards.mode}" else "B_ID",
+                     timevar="time",
+                     timeerrvar="sigmat",
+                     DeltaM=17.765,
+                     DeltaMerr=0.006,
+                     Lifetime=1.516,
+                     LifetimeErr=0.006,
+                     DeltaGamma=0.082,
+                     DeltaGammaErr=0.005,
+                     p0=SS_config[wildcards.year]['p0'],
+                     p1=SS_config[wildcards.year]['p1']
+                   )))
+    # second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+  # #   # run EPM -- takes 5 min or so
+        shell(f"(time bash {log.job}) &> {log.log}")
+        # copy calibration to know output
+        shell(f"cp {output.sandbox}/EspressoCalibrations.py {output.calibration}")
+#   #
+
+
+#Take SS calibration on DsPi
+rule SS_calibration:
+  """
+  Baseline for Bs2JpsiPhi -> take SS calibration from Dspi
+  """
+    wildcard_constraints:
+         mode = "(MC_)?Bs2DsPi",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+         sample = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbweighted.root"
+    output:
+         sandbox = directory("Calibration/SS_calibration/{year}/{mode}/{version}"),
+         calibration = "output/params/SS_Calibration/{year}/{mode}/{version}.py",
+    log:
+        log = "output/log/SS_calibration/{year}/{mode}/{version}.log",
+        job = "output/SS_calibration/{year}/{mode}/{version}.sh",
+        option = "output/SS_calibration/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/SS_calibration.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input}'),
+                     sweight=f"sigBsSW*gbw", #gbw
+                     idvar=f"B_TRUEID" if 'MC' in f"{wildcards.mode}" else "B_ID",
+                     timevar="time",
+                     timeerrvar="sigmat",
+                     DeltaM=17.765,
+                     DeltaMerr=0.006,
+                     Lifetime=1.516,
+                     LifetimeErr=0.006,
+                     DeltaGamma=0.082,
+                     DeltaGammaErr=0.005,
+                     p0=SS_config[wildcards.year]['p0'],
+                     p1=SS_config[wildcards.year]['p1']
+                   )))
+    # second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+  # #   # run EPM -- takes 5 min or so
+        shell(f"(time bash {log.job}) &> {log.log}")
+        # copy calibration to know output
+        shell(f"cp {output.sandbox}/EspressoCalibrations.py {output.calibration}")
+#   #
+
+
+
+#Take OS taggers and get a calibration in Bu
+rule OS_calibration_in_Bu:
+  """
+  OS taggers Calibration in Bu
+  """
+    wildcard_constraints:
+         mode = "Bu2JpsiKplus",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+         sample = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbweighted.root"
+    output:
+         sandbox = directory("Calibration/OS_calibration/{year}/{mode}/{version}"),
+         calibration = "output/params/OS_Calibration/{year}/{mode}/{version}.py",
+    log:
+        log = "output/log/OS_calibration/{year}/{mode}/{version}.log",
+        job = "output/OS_calibration/{year}/{mode}/{version}.sh",
+        option = "output/OS_calibration/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/OS_calibration.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input}'),
+                     # sweight=f"sw*gbw", #gbw 
+                     sweight=f"sigBuSW*gbw",
+                     idvar=f"B_TRUEID" if 'MC' in f"{wildcards.mode}" else "B_ID",
+                   )))
+    # second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+        shell(f"(time bash {log.job}) &> {log.log}")
+        # copy calibration to know output
+        shell(f"cp {output.sandbox}/EspressoCalibrations.py {output.calibration}")
+
+
+
+#Take OS taggers calibrations on Bu and create OS_Combination branches 
+#On signal (Bs2JpsiPhi) and on Bu
+rule OS_combination:
+   """
+   Combine OS taggers for Bs2JpsiPhi and Bu2JpsiKplus
+   """
+    wildcard_constraints:
+         mode = "(Bu2JpsiKplus|Bs2JpsiPhi)",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+        sample = input_for_combination,
+        calibration = "output/params/OS_Calibration/{year}/Bu2JpsiKplus/{version}.py",
+    output:
+        sandbox = directory("output/OS_combination/{year}/{mode}/{version}"),
+        sample = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged_OS.root",
+    log:
+        option = "output/OS_combination/{year}/{mode}/{version}.py",
+        job = "output/OS_combination/{year}/{mode}/{version}.sh",
+        log = "output/log/SSOS_combination/{year}/{mode}/{version}.log"
+    run:
+      # first, create options file from template
+      t = Template(open('templates/OS_combination.py').read())
+      with open(f"{log.option}", "w") as job:
+        job.write(open(f"{input.calibration}", 'r').read())
+        job.write(t.substitute(dict(
+            input_tuple=os.path.abspath(f'{input.sample}'),
+            output_tuple=os.path.abspath(f'{output.sample}'),
+        )))
+#     # second, write down a bash script to run the EPM
+      job_cmds = [
+        f"THE_PATH=`pwd`",
+        f"mkdir -p {output.sandbox}",
+        f"cd {output.sandbox}",
+        f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+        f"$THE_PATH/{log.option}",
+        f"cd $THE_PATH"
+        ]
+      with open(f"{log.job}", "w") as job:
+        job.write("\n".join(job_cmds))
+#     # run EPM -- takes 5 min or so
+      shell(f"(time bash {log.job}) &> {log.log}")
+#
+#     # this should be a script itself {{{
+      import uproot3 as uproot
+      import numpy as np
+      import pandas as pd
+      odf = uproot.open(f'{input.sample}')
+      odf = odf[list(odf.keys())[0]].pandas.df(flatten=None)
+      tdf = uproot.open(f'{output.sample}')
+      tdf = tdf[list(tdf.keys())[0]].pandas.df(flatten=None)
+      for i in tdf.keys():
+          if i in list(odf.keys()):
+            print(f'Dropping branch {i} from original df')
+            odf = odf.drop(columns=i)
+      result = pd.concat([odf, tdf], axis=1)
+      del odf
+      del tdf
+
+      with uproot.recreate(f"{output.sample}") as f:
+        _branches = {}
+        for k, v in result.items():
+            if 'int' in v.dtype.name:
+                _v = np.int32
+            elif 'bool' in v.dtype.name:
+                _v = np.int32
+            else:
+                _v = np.float64
+            _branches[k] = _v
+        mylist = list(dict.fromkeys(_branches.values()))
+        f['DecayTree'] = uproot.newtree(_branches)
+        f['DecayTree'].extend(result.to_dict(orient='list'))
+    # }}}
+
+
+
+
+#Take OS Combination branch and get calibration only expected to work on Bu!
+
+rule OSCombination_calibration_in_Bu:
+  """
+  OS Combination tagger calibration in Bu
+  """
+    wildcard_constraints:
+         mode = "Bu2JpsiKplus",
+         version = "v(0|1)r(\d)(p\d)?",
+    input:
+         sample = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged_OS.root"
+    output:
+         sandbox = directory("Calibration/OSCombination_calibration/{year}/{mode}/{version}"),
+         calibration = "output/params/OSCombination_calibration/{year}/{mode}/{version}.py",
+    log:
+        log = "output/log/OSCombination_calibration/{year}/{mode}/{version}.log",
+        job = "output/OSCombination_calibration/{year}/{mode}/{version}.sh",
+        option = "output/OSCombination_calibration/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/OSCombination_calibration.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input}'),
+                     # sweight=f"sw*gbw", #gbw 
+                     sweight=f"sigBuSW*gbw",
+                     idvar=f"B_TRUEID" if 'MC' in f"{wildcards.mode}" else "B_ID",
+                   )))
+    # second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+        shell(f"(time bash {log.job}) &> {log.log}")
+        # copy calibration to know output
+        shell(f"cp {output.sandbox}/EspressoCalibrations.py {output.calibration}")
+
+
+
+#Final studies, for the moment only 2; taking everything from DsPi or Baseline
+
+rule Combination_Performance_SSDsPi_OSDsPi:
+  """
+  Comparing IFT Calibration performance vs
+  Regular Combination performance from DsPi 
+  Step 5: Plan 
+  """
+    wildcard_constraints:
+        mode = "Bs2JpsiPhi",
+        version = "v(0|1)r(\d)(p\d)?",
+    input:
+        sample = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged.root",
+        Comb_cal = "output/params/Combination_Calibration/{year}/Bs2DsPi/{version}.py",
+        IFT_cal = "output/params/IFT_Calibration/{year}/Bs2DsPi/{version}.py",
+    output:
+         sandbox = directory("output/Combination_Plan/{year}/{mode}/{version}")
+    log:
+        log = "output/log/Combination_Plan/{year}/{mode}/{version}.log",
+        job = "output/Combination_Plan/{year}/{mode}/{version}.sh",
+        option = "output/Combination_Plan/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/Comb.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input.sample}'),
+                     sweight=f"sw", 
+                     Comb_Calibration=os.path.abspath(f'{input.Comb_cal}'),
+                     IFT_Calibration=os.path.abspath(f'{input.IFT_cal}'),
+                   )))
+    # second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+  # #   # run EPM -- takes 5 min or so
+        shell(f"(time bash {log.job}) &> {log.log}")
+
+
+
+rule Combination_Performance_SSDsPi_OSBu:
+  """
+  Comparing IFT Calibration performance vs
+  SS cal from DsPi + OS cal from Bu
+  Step 5: Plan 
+  """
+    wildcard_constraints:
+        mode = "Bs2JpsiPhi",
+        version = "v(0|1)r(\d)(p\d)?",
+    input:
+        sample = "tuples/{mode}/{year}/{mode}_{year}_{version}_tagged_OS.root",
+        OSComb_cal = "output/params/OSCombination_calibration/{year}/Bu2JpsiKplus/{version}.py",
+        SS_cal = "output/params/SS_Calibration/{year}/Bs2DsPi/{version}.py",
+        IFT_cal = "output/params/IFT_Calibration/{year}/Bs2DsPi/{version}.py",
+    output:
+         sandbox = directory("output/Combination_baseline/{year}/{mode}/{version}")
+    log:
+        log = "output/log/Combination_baseline/{year}/{mode}/{version}.log",
+        job = "output/Combination_baseline/{year}/{mode}/{version}.sh",
+        option = "output/Combination_baseline/{year}/{mode}/{version}.py",
+    run:
+        # first, create options file from template
+        t = Template(open('templates/Comb_baseline.py').read())
+        with open(f"{log.option}", "w") as job:
+           job.write(t.substitute(dict(
+                     input_tuple=os.path.abspath(f'{input.sample}'),
+                     sweight=f"sw", 
+                     OSComb_Calibration=os.path.abspath(f'{input.OSComb_cal}'),
+                     SS_Calibration=os.path.abspath(f'{input.SS_cal}'),
+                     IFT_Calibration=os.path.abspath(f'{input.IFT_cal}'),
+                   )))
+      #second, write down a bash script to run the EPM
+        job_cmds = [
+          f"THE_PATH=`pwd`",
+          f"mkdir -p {output.sandbox}",
+          f"cd {output.sandbox}",
+          f"$THE_PATH/EspressoPerformanceMonitor/build/bin/SimpleEvaluator " +
+          f"$THE_PATH/{log.option}",
+          f"cd $THE_PATH"
+         ]
+        with open(f"{log.job}", "w") as job:
+          job.write("\n".join(job_cmds))
+  # #   # run EPM -- takes 5 min or so
+        shell(f"(time bash {log.job}) &> {log.log}")
+

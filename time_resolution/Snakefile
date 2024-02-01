@@ -1,0 +1,70 @@
+#Author Ramon Ángel Ruiz Fernandez
+rule time_resolution:
+    """
+    DsPi prompt fit in time ->  2 gauss \conv (fwpv  + exp + delta)
+    Warning: For the moment fwpv from JpsiKK
+    """
+    wildcard_constraints:
+      mode = "Bs2DsPi_Prompt", #probably also for MC
+      version = "v(0|1)r(\d)(p\d)?",
+      year = "(201516|2017|2018)",
+      nbin = "[0-9]"
+    input:
+      file = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.root",
+      wpv_shape = "params/wpv_shape/{year}/v4r0_classical10_combined.json" #Warning from Bs2JpsiKK for the moment
+    output:
+      params = "output/params/time_res_fit/{mode}/{year}/{version}_{nbin}.json",
+      figures = directory("output/figures/time_res_fit/{mode}/{year}/{version}_{nbin}")
+    log:
+      "output/log/time_res/{mode}/{year}/{version}_{nbin}.log"
+    run:
+        tLL = -1.
+        tUL = 0.1
+        shell(f"""(time\
+            python time_resolution/calibration_res.py\
+              --data {input.file}\
+              --wpv-shape {input.wpv_shape}\
+              --time-range " -3., 7."\
+              --nbin {wildcards.nbin}\
+              --output-json {output.params}\
+              --output-plots {output.figures}\
+            ) &> {log}""") #Warning to add own weights
+
+rule calibration:
+    """
+    Linear fit: sigma_average vs sigma_eff (from delution)
+    """
+    wildcard_constraints:
+      mode = "Bs2DsPi_Prompt", #probably also for MC
+      version = "v(0|1)r(\d)(p\d)?",
+      year = "(201516|2017|2018)",
+      nbin = "[0-9]"
+    input:
+      file = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbweighted.root",
+      params = expand("output/params/time_res_fit/{mode}/{year}/{version}_{nbin}.json",
+                      mode='{mode}',
+                      year='{year}',
+                      version='{version}',
+                      nbin=range(0,10))
+    output:
+      params = "output/params/time_res_fit/{mode}/{year}/{version}.json",
+      figures = directory("output/figures/time_res_fit/{mode}/{year}/{version}")
+    log:
+      "output/log/time_res_fit/{mode}/{year}/{version}.json",
+    run:
+      shell(f"""(time\
+        python time_resolution/linear_fit.py\
+              --data {input.file}\
+              --json-bin {",".join(input.params)}\
+              --maxbin 10\
+              --output-json {output.params}\
+              --output-plots {output.figures}\
+            ) &> {log}""") #Warning to add own weights
+
+
+
+
+
+
+
+

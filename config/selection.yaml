@@ -1,0 +1,11 @@
+mass_model:
+  Bs2DsPi: "hypatia"
+  Bu2JpsiKplus: "crystalball"
+
+sweight:
+  Bs2DsPi: "sigBsSW"
+  Bu2JpsiKplus: "sigBuSW"
+
+ss_branch: "IFT"
+
+

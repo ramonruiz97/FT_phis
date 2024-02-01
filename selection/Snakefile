@@ -1,0 +1,597 @@
+#Author Ramon Ángel Ruiz Fernandez
+
+with open('config/selection.yaml') as file:
+    selection_config = yaml.load(file, Loader=yaml.FullLoader)
+
+rule download_tuple:
+    """
+    Rule for downloading tuples for Tagging 
+    """
+    wildcard_constraints:
+         mode = "(MC_)?(Bu2JpsiKplus|Bs2DsPi|Bs2JpsiPhi)(_dG0)?",
+         version = "v(0|1|4)r(\d)(p\d)?",
+         year= "(201516|2017|2018)",
+    output:
+       "tuples/{mode}/{year}/{version}.root"
+    log:
+       "output/log/{mode}/{year}/{version}.log"
+    run:
+        shell(f"""(time\
+            python scripts/download_tuples.py\
+            --year {wildcards.year}\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --output {output}\
+            ) &> {log}""")
+
+#sW8 before GBW8 pipeline
+# {{{
+rule pre_mass_prefit:
+  wildcard_constraints:
+      mode = "(MC_)?Bu2JpsiKplus",
+      version = "v(0|1|4)r(\d)(p\d)?",
+      massmodel = "(crystalball|ipatia)",
+      trigger = "(biased|unbiased)"
+  input:
+    root = "tuples/{mode}/{year}/{version}.root",
+  output:
+    params = 'output/params/pre_mass_prefit/{year}/{mode}/{version}_{massmodel}_{trigger}.json',
+    plots = directory('output/figures/pre_mass_prefit/{year}/{mode}/{version}_{massmodel}_{trigger}/')
+  log:
+    'output/log/pre_mass_prefit/{year}/{mode}/{version}_{massmodel}_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --output-params {output.params} \
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --mode {wildcards.mode} \
+    --trigger {wildcards.trigger} \
+    ) &> {log}""")
+
+rule pre_mass_fit_data:
+  """
+     Fit for Bu sw8
+  """
+  threads: 2
+  resources:
+    mem_mb=6000
+  wildcard_constraints:
+    mode = 'Bu2JpsiKplus',
+    version = "v(0|1|4)r(\d)(p\d)?",
+    massmodel = "(crystalball|ipatia)",
+    trigger = "(biased|unbiased)"
+  input:
+    root = "tuples/{mode}/{year}/{version}.root",
+    params = 'output/params/pre_mass_prefit/{year}/MC_{mode}/{version}_{massmodel}_{trigger}.json',
+  output:
+    params = 'output/params/pre_mass_fit/{year}/{mode}/{version}_{massmodel}_pregbw_{trigger}.json',
+    sweights = temp("tuples/{mode}/{year}/{version}_{massmodel}_pregbw_{trigger}.npy"),
+    plots = directory('output/figures/pre_mass_fit/{year}/{mode}/{version}_{massmodel}_pregbw_{trigger}/')
+  log:
+    'output/log/pre_mass_fit_bu_rd/{year}/{mode}/{version}_{massmodel}_pregbw_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --input-params {input.params} \
+    --output-params {output.params} \
+    --sweights {output.sweights}\
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --trigger {wildcards.trigger} \
+    --mode {wildcards.mode} \
+    ) &> {log}""")
+
+rule pre_mass_fit_mc:
+  """
+     Fit for Bu sw8
+  """
+  threads: 2
+  resources:
+    mem_mb=6000
+  wildcard_constraints:
+    mode = 'MC_Bu2JpsiKplus',
+    version = "v(0|1|4)r(\d)(p\d)?",
+    massmodel = "(crystalball|ipatia)",
+    trigger = "(biased|unbiased)"
+  input:
+    root = "tuples/{mode}/{year}/{version}.root",
+    params = 'output/params/pre_mass_prefit/{year}/{mode}/{version}_{massmodel}_{trigger}.json',
+  output:
+    params = 'output/params/pre_mass_fit/{year}/{mode}/{version}_{massmodel}_pregbw_{trigger}.json',
+    sweights = temp("tuples/{mode}/{year}/{version}_{massmodel}_pregbw_{trigger}.npy"),
+    plots = directory('output/figures/pre_mass_fit/{year}/{mode}/{version}_{massmodel}_pregbw_{trigger}/')
+  log:
+    'output/log/pre_mass_fit_bu_rd/{year}/{mode}/{version}_{massmodel}_pregbw_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --input-params {input.params} \
+    --output-params {output.params} \
+    --sweights {output.sweights}\
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --trigger {wildcards.trigger} \
+    --mode {wildcards.mode} \
+    ) &> {log}""")
+
+rule Merge_sweights_pregbw:
+  """
+  This rule takes a list of .npy and merge them in one single tuple
+  """
+  threads: 2
+  resources:
+      mem_mb=6000
+  wildcard_constraints:
+      mode = '(MC_)?Bu2JpsiKplus',
+      version = "v(0|1|4)r(\d)(p\d)?",
+      massmodel = "(ipatia|crystalball)"
+  input:
+      root = "tuples/{mode}/{year}/{version}.root",
+      npy = lambda wcs: expand(
+                "tuples/{mode}/{year}/{version}_{massmodel}_pregbw_{trigger}.npy",
+                version=wcs.version,
+                mode= wcs.mode,
+                year = wcs.year,
+                massmodel = wcs.massmodel,
+                trigger = ["biased", "unbiased"],
+            ),
+  output:
+      root = "tuples/{mode}/{year}/{version}_{massmodel}_pregbw.root",
+  log:
+      "output/log/merge_sweights_pregbw/{mode}/{year}/{mode}_{year}_{version}_{massmodel}_pregbw.log",
+  run:
+      shell(f"""(time\
+    python scripts/sweights_add.py \
+    --input-sample {input.root} \
+    --output-sample {output.root} \
+    --mode {wildcards.mode} \
+    --version {wildcards.version} \
+    --weights {",".join(input.npy)}\
+    ) &> {log}""")
+# }}}
+
+#SW8 for DsPi {{{
+
+rule sWeights_DsPi_MCfit:
+    """
+    Sweights for DsPi MC
+		B_BKGCAT = 0, 20, 50 
+    prefit for taking hypatia shape
+    mass_window -> narrow
+    """
+    wildcard_constraints:
+         mode = "MC_Bs2DsPi",
+         version = "v(0|1|4)r(\d)(p\d)?",
+				 year = "(201516|2017|2018)",
+				 massmodel="ipatia"
+    input:
+       data = "tuples/{mode}/{year}/{version}.root",
+    output:
+        params = "output/params/mass_mcfit/{mode}/{year}/{version}_{massmodel}{tagger}.json",
+        plots = directory("output/figures/mass_mcfit/{mode}/{year}/{version}_{massmodel}{tagger}/"),
+    log:
+       "output/log/mass_mcfit/{mode}/{year}/{version}_{massmodel}_sweight{tagger}.log"
+    run:
+        shell(f"""(time\
+            python scripts/mc_ds.py\
+            --sample {input.data}\
+            --output-params {output.params}\
+            --output-figures {output.plots}\
+            --mass-model {wildcards.massmodel}\
+            --mass-branch B_PVFitDs_M_1\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+						--tagger {wildcards.tagger}\
+            ) &> {log}""") #TODO: Warning to merge both scripts mc_ds.py and ds.py
+
+rule sWeights_DsPi_prefit:
+    """
+    Sweights for DsPi data
+    Prefit -> Wide window 
+    """
+    wildcard_constraints:
+         mode = "Bs2DsPi",
+         version = "v(0|1|4)r(\d)(p\d)?",
+				 year = "(201516|2017|2018)",
+				 massmodel="ipatia"
+    input:
+       data = "tuples/{mode}/{year}/{version}.root",
+       params = "output/params/mass_mcfit/MC_Bs2DsPi/{year}/{version}_{massmodel}{tagger}.json",
+       templates = ["tuples/templates/bs_dskx.root",
+                    "tuples/templates/bs_dsx.root",
+                    "tuples/templates/DsK_mass_template.root"
+                    ]
+    output:
+        params = "output/params/mass_prefit/{mode}/{year}/{version}_{massmodel}{tagger}.json",
+        plots = directory("output/figures/mass_prefit/{mode}/{year}/{version}_{massmodel}{tagger}/"),
+    log:
+       "output/log/mass_prefit/{mode}/{year}/{version}_{massmodel}_sweight{tagger}.log"
+    run:
+        shell(f"""(time\
+            python scripts/ds.py\
+            --sample {input.data}\
+            --input-params {input.params}\
+            --templates {",".join(input.templates)}\
+            --output-params {output.params}\
+            --output-figures {output.plots}\
+            --mass-model {wildcards.massmodel}\
+            --mass-branch B_PVFitDs_M_1\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+						--tagger {wildcards.tagger}\
+            ) &> {log}""")
+
+rule sWeights_DsPi_fit:
+    """
+    Sweights for DsPi data
+    Prefit -> Wide window 
+    """
+    wildcard_constraints:
+         mode = "Bs2DsPi",
+         version = "v(0|1|4)r(\d)(p\d)?",
+				 massmodel = "ipatia"
+    input:
+       file = "tuples/{mode}/{year}/{version}.root",
+       params = "output/params/mass_prefit/{mode}/{year}/{version}_{massmodel}{tagger}.json",
+       templates = ["tuples/templates/bs_dskx.root",
+                    "tuples/templates/bs_dsx.root",
+                    "tuples/templates/DsK_mass_template.root"
+                    ]
+    output:
+        params = "output/params/mass_fit/{mode}/{year}/{version}_{massmodel}{tagger}.json",
+        file = "tuples/{mode}/{year}/{version}_{massmodel}_pregbw{tagger}.root",
+        figures = directory("output/figures/mass_fit/{mode}/{year}/{version}_{massmodel}{tagger}/"),
+    log:
+       "output/log/mass_fit/{mode}/{year}/{version}_{massmodel}_sweight{tagger}.log"
+    run:
+        shell(f"""(time\
+            python scripts/ds.py\
+            --sample {input.file}\
+            --input-params {input.params}\
+            --templates {",".join(input.templates)}\
+            --input-params {input.params}\
+            --output-params {output.params}\
+            --output-figures {output.figures}\
+            --output-sample {output.file}\
+            --mass-model {wildcards.massmodel}\
+            --mass-branch B_PVFitDs_M_1\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+						--tagger {wildcards.tagger}\
+            ) &> {log}""")
+
+#}}}
+
+def input_for_gbw(wildcards):
+	if wildcards.mode=="MC_Bs2DsPi":
+		root = "tuples/{mode}/{year}/{version}.root"
+	else:
+	  if wildcards.tagger:
+		  root = "tuples/{mode}/{year}/{version}_ipatia_pregbw{tagger}.root" 
+	  if "Bu" in wildcards.mode:
+		  root = "tuples/{mode}/{year}/{version}_ipatia_combined_sweighted.root" 
+	return root
+
+
+rule apply_gbw8:
+    """
+    Rule for Applying gbw to samples in order to be more similar to signal 
+    and reduce Portability systematic
+    """
+    wildcard_constraints:
+         mode = "(MC_)?(Bu2JpsiKplus|Bs2DsPi|Bs2JpsiPhi)(_dG0)?",
+         # version = "v(0|1|4)r(\d)(p\d)?",
+    input:
+      #Change of order -> Download -> GBW -> 5 * SW8 (each tagger) -> Calibration each -> 
+      #Combination -> SW8(Combination) -> Calibration
+      original = input_for_gbw,
+      # original = lambda wcs: expand("tuples/{mode}/{year}/{version}_ipatia_pregbw{tagger}.root",
+      #                       mode=wcs.mode,
+      #                       year=wcs.year,
+      #                       version=wcs.version,
+						# 								tagger=wcs.tagger if "Bs" in wcs.mode else ""),
+			                
+
+        # original = lambda wcs: expand("tuples/{mode}/{year}/{version}/{version}_{massmodel}.root",
+        #                     mode=wcs.mode,
+        #                     year=wcs.year,
+        #                     version=wcs.version,
+        #                     massmodel=selection_config['mass_model'][wcs.mode]),
+
+      #Already w/ sw8 from phis-scq -> Bs2JpsiPhi
+      target = lambda wcs: expand("tuples/{mode}/{year}/{version}.root",
+                            mode="MC_Bs2JpsiPhi" if "MC" in wcs.mode else "Bs2JpsiPhi",
+                            year=wcs.year,
+                            version=wcs.version),
+    output:
+      "tuples/{mode}/{year}/{version}_gbweighted{tagger}.root"
+    log:
+      "output/log/{mode}/{year}/{version}_gbweighted{tagger}.log"
+    run:
+      shell(f"""(time\
+              python scripts/apply_gbw8.py\
+              --original-file {input.original}\
+              --original-tree DecayTree\
+              --target-file {input.target}\
+              --target-tree DecayTree\
+              --year {wildcards.year}\
+              --mode {wildcards.mode}\
+              --version {wildcards.version}\
+              --output-file {output}\
+              --output-tree DecayTree\
+              ) &> {log}""")
+
+
+
+
+#SW8 for each of the taggers -> Needed for B+
+# {{{
+
+rule mass_prefit_bu_mc:
+  """
+    Prefit for Bu sw8
+  """
+  threads: 2
+  resources:
+    mem_mb=6000
+  wildcard_constraints:
+    mode = 'MC_Bu2JpsiKplus',
+    version = "v(0|1|4)r(\d)(p\d)?",
+    tagger = "(OSMuonLatest|OSKaonLatest|OSElectronLatest|OSCharm|OSVtxCh)",
+    trigger = "(biased|unbiased|combined)",
+  input:
+    root = "tuples/{mode}/{year}/{version}_ipatia_pregbw.root"
+  output:
+    params = 'output/params/mass_prefit/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}.json',
+    plots = directory('output/figures/mass_prefit/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}/')
+  log:
+    'output/log/mass_prefit_bu_mc/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --output-params {output.params} \
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --mode {wildcards.mode} \
+    --tagger {wildcards.tagger}\
+    --trigger {wildcards.trigger}\
+    ) &> {log}""")
+
+rule mass_fit_bu_data:
+  """
+     Fit for Bu sw8
+  """
+  threads: 2
+  resources:
+    mem_mb=6000
+  wildcard_constraints:
+    mode = 'Bu2JpsiKplus',
+    version = "v(0|1|4)r(\d)(p\d)?",
+    tagger = "(OSMuonLatest|OSKaonLatest|OSElectronLatest|OSCharm|OSVtxCh)",
+    trigger = "(biased|unbiased|combined)"
+  input:
+    root = "tuples/{mode}/{year}/{version}_ipatia_pregbw.root",
+    # root = "tuples/{mode}/{year}/{version}_gbweighted.root",
+    params = 'output/params/mass_prefit/{year}/MC_{mode}/{version}_{massmodel}_{tagger}_{trigger}.json',
+  output:
+    params = 'output/params/mass_fit/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}.json',
+    sweights = temp("tuples/{mode}/{year}/{version}_{massmodel}_{tagger}_{trigger}.npy"),
+    plots = directory('output/figures/mass_fit/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}/')
+  log:
+    'output/log/mass_fit_bu_rd/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --input-params {input.params} \
+    --output-params {output.params} \
+    --sweights {output.sweights}\
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --tagger {wildcards.tagger} \
+    --mode {wildcards.mode} \
+    --trigger {wildcards.trigger}\
+    ) &> {log}""")
+
+rule mass_fit_bu_mc:
+  """
+     Fit for Bu sw8
+  """
+  threads: 2
+  resources:
+    mem_mb=6000
+  wildcard_constraints:
+    mode = 'MC_Bu2JpsiKplus',
+    version = "v(0|1|4)r(\d)(p\d)?",
+    tagger = "(OSMuonLatest|OSKaonLatest|OSElectronLatest|OSCharm|OSVtxCh)",
+    trigger = "(biased|unbiased|combined)"
+  input:
+    # root = "tuples/{mode}/{year}/{version}_gbweighted.root",
+    root = "tuples/{mode}/{year}/{version}_ipatia_pregbw.root",
+    params = 'output/params/mass_prefit/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}.json',
+  output:
+    params = 'output/params/mass_fit/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}.json',
+    sweights = temp("tuples/{mode}/{year}/{version}_{massmodel}_{tagger}_{trigger}.npy"),
+    plots = directory('output/figures/mass_fit/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}/')
+  log:
+    'output/log/mass_fit_bu_mc/{year}/{mode}/{version}_{massmodel}_{tagger}_{trigger}.log',
+  run:
+    shell(f"""(time\
+    python scripts/bu.py \
+    --sample {input.root} \
+    --input-params {input.params} \
+    --output-params {output.params} \
+    --sweights {output.sweights}\
+    --output-figures {output.plots} \
+    --mass-model {wildcards.massmodel} \
+    --tagger {wildcards.tagger} \
+    --mode {wildcards.mode} \
+    --trigger {wildcards.trigger}\
+    ) &> {log}""")
+
+rule Merge_sweights: 
+  """
+  This rule takes a list of .npy and merge them in one single tuple
+  """
+  threads: 2
+  resources:
+      mem_mb=6000
+  wildcard_constraints:
+      mode = '(MC_)?Bu2JpsiKplus',
+      version = "v(0|1|4)r(\d)(p\d)?",
+      massmodel = "(ipatia|crystalball)"
+  input:
+      # root = "tuples/{mode}/{year}/{version}_gbweighted.root",
+      root = "tuples/{mode}/{year}/{version}_ipatia_pregbw.root",
+      npy = lambda wcs: expand(
+                "tuples/{mode}/{year}/{version}_{massmodel}_{tagger}_{trigger}.npy",
+                version=wcs.version,
+                mode= wcs.mode,
+                year = wcs.year,
+                massmodel = wcs.massmodel,
+                trigger = ["biased", "unbiased"],
+                tagger = ["OSMuonLatest", "OSKaonLatest", "OSElectronLatest", "OSCharm", "OSVtxCh"]
+            ),
+  output:
+      root = "tuples/{mode}/{year}/{version}_{massmodel}_sweighted.root",
+  log:
+      "output/log/merge_sweights/{mode}/{year}/{mode}_{year}_{version}_{massmodel}_sweighted.log",
+  run:
+      shell(f"""(time\
+    python scripts/sweights_add.py \
+    --input-sample {input.root} \
+    --output-sample {output.root} \
+    --mode {wildcards.mode} \
+    --version {wildcards.version} \
+    --weights {",".join(input.npy)}\
+    ) &> {log}""")
+
+
+# }}}
+
+
+
+#Other rules not used for the moments -> Needed for previous to time resolution
+# {{{
+rule Copy_Prompt:
+  """
+  Artifact for the moment to download (copy) Prompt samples
+  """
+    wildcard_constraints:
+      mode = "Bs2DsPi_Prompt", #probably also for MC
+      version = "v(0|1|4)r(\d)(p\d)?",
+      year = "(201516|2017|2018)"
+  output:
+    "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.root",
+  log:
+      "output/log/copy/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.log"
+  run:
+      shell(f"""
+            cp /scratch49/ramon.ruiz/test_tag/Data_Kechen/Dspi_prompt_data_{wildcards.year}.root {output}
+      """
+
+              )
+
+# rule download_prompt:
+#   """
+#   Download Sevda tuples and concatenate 2015+2016
+#   """
+#   wildcard_constraints:
+#       mode = "Bs2DsPi_Prompt", #probably also for MC
+#       version = "v(0|1)r(\d)(p\d)?",
+#       year = "(201516|2017|2018)"
+#   output:
+#     "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.root",
+#   log:
+#       "output/log/copy/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.log"
+#   run:
+#     if wildcards.year=="201516":
+#         shell(f"""
+#                 xrdcp -f root://eoslhcb.cern.ch//eos/lhcb/wg/B2CC/Bs2JpsiPhi-FullRun2/v1r5/Bs2DsPi_Prompt/Bs2DsPi_Prompt_2015_selected_v1r5.root  tuples/{wildcards.mode}/2015/{wildcards.mode}_2015_selected_bdt_{wildcards.version}.root
+#                 """)
+#         shell(f"""
+#                 xrdcp -f root://eoslhcb.cern.ch//eos/lhcb/wg/B2CC/Bs2JpsiPhi-FullRun2/v1r5/Bs2DsPi_Prompt/Bs2DsPi_Prompt_2016_selected_v1r5.root  tuples/{wildcards.mode}/2016/{wildcards.mode}_2016_selected_bdt_{wildcards.version}.root
+#                 """)
+#         shell(f"""hadd {output} tuples/{wildcards.mode}/2015/{wildcards.mode}_2015_selected_bdt_{wildcards.version}.root tuples/{wildcards.mode}/2016/{wildcards.mode}_2016_selected_bdt_{wildcards.version}.root""")
+#
+#         shell(f"""rm tuples/{wildcards.mode}/2015/{wildcards.mode}_2015_selected_bdt_{wildcards.version}.root""")
+#
+#         shell(f"""rm tuples/{wildcards.mode}/2016/{wildcards.mode}_2016_selected_bdt_{wildcards.version}.root""")
+#     else:
+#         shell(f"""xrdcp -f root://eoslhcb.cern.ch//eos/lhcb/wg/B2CC/Bs2JpsiPhi-FullRun2/v1r5/Bs2DsPi_Prompt/Bs2DsPi_Prompt_{wildcards.year}_selected_v1r5.root  {output}""")
+
+
+# rule sw8_prompt:
+#   """
+#   sw8 Prompt
+#   """
+#   wildcard_constraints:
+#       mode = "Bs2DsPi_Prompt", #probably also for MC
+#       version = "v(0|1)r(\d)(p\d)?",
+#       year = "(201516|2017|2018)"
+#   input:
+#     "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.root",
+#   output:
+#     "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_sweight.root",
+#   log:
+#     "output/log/copy/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_sweight.log"
+#   run:
+    
+
+
+
+  
+
+
+rule preResolution_Prompt:
+  """
+  rule for applying a special gbw in Prompt Dspi:
+  original file: DsPi_Prompt (already sw8)
+  target file: DsPi data (w/ gbw8 and sw8)
+  original weight: sw
+  target weight: sw*gbw
+  """
+  wildcard_constraints:
+      mode = "Bs2DsPi_Prompt", #probably also for MC
+      version = "v(0|1|4)r(\d)(p\d)?",
+      year = "(201516|2017|2018)"
+  input:
+      original = "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}.root",
+      target = expand("tuples/Bs2DsPi/{year}/Bs2DsPi_{year}_selected_bdt_{version}_gbweighted.root",
+                       version='{version}',
+                       year ='2016' if '{year}'=='201516' else '{year}'
+                       ) 
+  output:
+      "tuples/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbweighted.root"
+  log:
+      "output/log/gbw/{mode}/{year}/{mode}_{year}_selected_bdt_{version}_gbw8.log"
+  run:
+        shell(f"""(time\
+            python scripts/apply_gbw8.py\
+            --original-file {input.original}\
+            --original-tree DecayTree\
+            --target-file {input.target}\
+            --target-tree DecayTree\
+            --original-weight sig_sw\
+            --target-weight time/time\
+            --year {wildcards.year}\
+            --mode {wildcards.mode}\
+            --version {wildcards.version}\
+            --output-file {output}\
+            --output-tree DecayTree\
+            ) &> {log}""") #Warning to add own weights
+# }}}
+
+
+
+
+
+
+# vim: fdm=marker ts=2 sw=2 sts=2 sr noet
+
+

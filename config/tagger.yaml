@@ -1,0 +1,71 @@
+#Warning Sevda try
+IFT: 
+  branch:
+     decision: 'B_IFT_InclusiveTagger_TAGDEC'
+     eta: 'B_IFT_InclusiveTagger_TAGETA'
+  cut: 'q!=0'
+
+SS: 
+  branch:
+     decision: 'B_SSKaonLatest_TAGDEC'
+     eta: 'B_SSKaonLatest_TAGETA'
+  # cut: 'q!=0 & eta!=0.5'
+  # cut: 'q!=0'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+
+SSK: 
+  branch:
+     decision: 'B_SSKaonLatest_TAGDEC'
+     eta: 'B_SSKaonLatest_TAGETA'
+  # cut: 'q!=0 & eta!=0.5'
+  # cut: 'q!=0'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+
+OSKaonLatest: 
+  branch:
+     decision: 'B_OSKaonLatest_TAGDEC'
+     eta: 'B_OSKaonLatest_TAGETA'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+  # cut:  "~(q == 0)" #Sevda
+
+OSMuonLatest: 
+  branch:
+     decision: 'B_OSMuonLatest_TAGDEC'
+     eta: 'B_OSMuonLatest_TAGETA'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+  # cut:  "~(q == 0)"#Sevda 
+
+OSElectronLatest: 
+  branch:
+     decision: 'B_OSElectronLatest_TAGDEC'
+     eta: 'B_OSElectronLatest_TAGETA'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+  # cut:  "~(q == 0)"#Sevda 
+
+OSCharm: 
+  branch:
+     decision: 'B_OSCharm_TAGDEC'
+     eta: 'B_OSCharm_TAGETA'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+  # cut:  "~(q == 0)"#Sevda 
+
+OSVtxCh: 
+  branch:
+     decision: 'B_OSVtxCh_TAGDEC'
+     eta: 'B_OSVtxCh_TAGETA'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+  # cut:  "~(q == 0)"#Sevda 
+
+OSCombination: 
+  branch:
+     decision: 'OSCombination_TAGDEC'
+     eta: 'OSCombination_TAGETA'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+  # cut:  "~(q == 0)"#Sevda 
+
+OS: 
+  branch:
+     decision: 'OS_Combination_DEC'
+     eta: 'OS_Combination_ETA'
+  cut:  "~(eta < 0 | eta >= 0.5 | q == 0)"
+  # cut:  "~(q == 0)"#Sevda 
